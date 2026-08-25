@@ -17,16 +17,17 @@ except ImportError:
 
 # ─── CONFIG ──────────────────────────────────────────────
 SESSION_ID = os.environ.get("SESSION_ID", "")
+IG_USERNAME = os.environ.get("IG_USERNAME", "")   # re-login ke liye
+IG_PASSWORD = os.environ.get("IG_PASSWORD", "")   # re-login ke liye
 DEFAULT_DELAY = 20
 MIN_DELAY = 10
 API_TIMEOUT = 60
-THREAD_SCAN_LIMIT = 500   # maximum groups to fetch
+THREAD_SCAN_LIMIT = 500
 
 # ─── LOGGING ─────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ─── FLASK APP ────────────────────────────────────────────
 app = Flask(__name__)
 
 # ─── HELPERS ─────────────────────────────────────────────
@@ -54,23 +55,40 @@ def retry_api_call(func, *args, max_retries=2, **kwargs):
             time.sleep(5 * (attempt + 1))
     return None
 
-# ─── LOGIN ──────────────────────────────────────────────
+# ─── LOGIN / RE-LOGIN ────────────────────────────────────
 def login_session(session_id):
     session_id = decode_session(session_id)
     try:
         cl = Client()
         cl.timeout = API_TIMEOUT
-        cl.login_by_sessionid(session_id)
+        # Prefer username/password if available (more robust)
+        if IG_USERNAME and IG_PASSWORD:
+            cl.login(IG_USERNAME, IG_PASSWORD)
+        else:
+            cl.login_by_sessionid(session_id)
         return cl
     except Exception as e:
         logger.error(f"Login failed: {e}")
         return None
 
-# ─── FETCH GROUPS (PRIMARY: private_request + pagination) ─
+def ensure_valid_session(cl, session_id):
+    """Check if session valid; if not, try to re-login."""
+    try:
+        cl.user_id  # simple check
+        return cl
+    except (LoginRequired, Exception):
+        logger.warning("🔄 Session invalid, attempting re-login...")
+        new_cl = login_session(session_id)
+        if new_cl:
+            return new_cl
+        return None
+
+# ─── FETCH GROUPS (multiple fallback methods) ────────────
 def fetch_all_groups_private(cl, limit=THREAD_SCAN_LIMIT):
-    all_group_ids = []
+    """Primary: private_request with pagination."""
+    all_ids = []
     cursor = None
-    while len(all_group_ids) < limit:
+    while len(all_ids) < limit:
         try:
             data = {
                 "visual_message_return_type": "unseen",
@@ -87,20 +105,20 @@ def fetch_all_groups_private(cl, limit=THREAD_SCAN_LIMIT):
                 if t.get("is_group") or len(t.get("users", [])) > 1:
                     tid = str(t.get("thread_v2_id") or t.get("thread_id") or t.get("pk"))
                     if tid:
-                        all_group_ids.append(tid)
+                        all_ids.append(tid)
             next_cursor = inbox.get("oldest_cursor") or inbox.get("next_cursor")
             has_older = inbox.get("has_older", False)
             if not has_older or not next_cursor:
                 break
             cursor = next_cursor
-            time.sleep(1)   # respectful delay
+            time.sleep(1)
         except Exception as e:
             logger.warning(f"private_request pagination failed: {e}")
             break
-    return list(dict.fromkeys(all_group_ids))
+    return list(dict.fromkeys(all_ids))
 
-# ─── FETCH GROUPS (FALLBACK 1: direct_threads with high amount) ─
 def fetch_groups_direct(cl, limit=THREAD_SCAN_LIMIT):
+    """Fallback 1: direct_threads with high amount."""
     try:
         threads = cl.direct_threads(amount=limit)
         return [str(t.id) for t in threads if t.is_group]
@@ -108,8 +126,8 @@ def fetch_groups_direct(cl, limit=THREAD_SCAN_LIMIT):
         logger.warning(f"direct_threads fallback failed: {e}")
         return []
 
-# ─── FETCH GROUPS (FALLBACK 2: direct_threads with manual pagination) ─
 def fetch_groups_direct_paginated(cl, limit=THREAD_SCAN_LIMIT):
+    """Fallback 2: direct_threads with manual pagination."""
     all_ids = []
     cursor = None
     while len(all_ids) < limit:
@@ -121,7 +139,6 @@ def fetch_groups_direct_paginated(cl, limit=THREAD_SCAN_LIMIT):
             if not threads:
                 break
             all_ids.extend([str(t.id) for t in threads if t.is_group])
-            # Try to get next cursor from last_response
             raw = cl.last_response.json()
             inbox = raw.get("inbox", {})
             next_cursor = inbox.get("oldest_cursor") or inbox.get("next_cursor")
@@ -135,61 +152,79 @@ def fetch_groups_direct_paginated(cl, limit=THREAD_SCAN_LIMIT):
             break
     return list(dict.fromkeys(all_ids))
 
-# ─── MASTER FETCH (tries all methods) ─────────────────────
 def fetch_all_groups(cl, limit=THREAD_SCAN_LIMIT):
-    # 1st try: private_request pagination
+    """Try all fetch methods."""
+    # 1st try: private_request
     ids = fetch_all_groups_private(cl, limit)
     if ids:
         return ids
-
     # 2nd try: direct_threads high amount
     ids = fetch_groups_direct(cl, limit)
     if ids:
         return ids
-
-    # 3rd try: direct_threads with manual pagination
+    # 3rd try: manual pagination
     ids = fetch_groups_direct_paginated(cl, limit)
     if ids:
         return ids
-
     return []
 
-# ─── ADD USER WITH FALLBACK METHODS ──────────────────────
-def add_user_to_thread(cl, thread_id, user_id):
+# ─── ADD USER WITH FALLBACKS + RE-LOGIN ──────────────────
+def add_user_to_thread(cl, thread_id, user_id, session_id):
     if not thread_id or not user_id:
         return False
 
-    # Method 1: direct_add_user
-    try:
-        if hasattr(cl, 'direct_add_user'):
-            result = retry_api_call(cl.direct_add_user, thread_id, user_id)
-            if result is not None:
-                logger.info(f"✅ Added user {user_id} via direct_add_user")
-                return True
-    except Exception as e:
-        logger.warning(f"⚠️ direct_add_user failed: {e}")
+    def attempt(cl):
+        # Method 1: direct_add_user
+        try:
+            if hasattr(cl, 'direct_add_user'):
+                result = retry_api_call(cl.direct_add_user, thread_id, user_id)
+                if result is not None:
+                    logger.info(f"✅ Added user {user_id} via direct_add_user")
+                    return True
+        except LoginRequired:
+            raise
+        except Exception as e:
+            logger.warning(f"⚠️ direct_add_user failed: {e}")
 
-    # Method 2: private_request
+        # Method 2: private_request
+        try:
+            url = f"direct_v2/threads/{thread_id}/add_user/"
+            data = {"user_id": str(user_id)}
+            result = retry_api_call(cl.private_request, url, data)
+            if result and result.get("status") == "ok":
+                logger.info(f"✅ Added user {user_id} via private_request")
+                return True
+        except LoginRequired:
+            raise
+        except Exception as e:
+            logger.warning(f"⚠️ private_request add failed: {e}")
+
+        # Method 3: direct_messages.add_user
+        try:
+            if hasattr(cl, 'direct_messages') and hasattr(cl.direct_messages, 'add_user'):
+                result = retry_api_call(cl.direct_messages.add_user, thread_id, user_id)
+                if result is not None:
+                    logger.info(f"✅ Added user {user_id} via direct_messages.add_user")
+                    return True
+        except LoginRequired:
+            raise
+        except Exception as e:
+            logger.warning(f"⚠️ direct_messages.add_user failed: {e}")
+
+        return False
+
+    # Try with current client
     try:
-        url = f"direct_v2/threads/{thread_id}/add_user/"
-        data = {"user_id": str(user_id)}
-        result = retry_api_call(cl.private_request, url, data)
-        if result and result.get("status") == "ok":
-            logger.info(f"✅ Added user {user_id} via private_request")
+        if attempt(cl):
             return True
-    except Exception as e:
-        logger.warning(f"⚠️ private_request add failed: {e}")
-
-    # Method 3: direct_messages.add_user (if available)
-    try:
-        if hasattr(cl, 'direct_messages') and hasattr(cl.direct_messages, 'add_user'):
-            result = retry_api_call(cl.direct_messages.add_user, thread_id, user_id)
-            if result is not None:
-                logger.info(f"✅ Added user {user_id} via direct_messages.add_user")
-                return True
-    except Exception as e:
-        logger.warning(f"⚠️ direct_messages.add_user failed: {e}")
-
+    except LoginRequired:
+        logger.warning("LoginRequired during add, re-logging in...")
+        new_cl = ensure_valid_session(cl, session_id)
+        if new_cl:
+            try:
+                return attempt(new_cl)
+            except LoginRequired:
+                pass
     return False
 
 # ─── MAIN ENGINE ────────────────────────────────────────
@@ -222,11 +257,17 @@ def add_users_stream(session_id, group_ids, usernames, delay_seconds, batch_size
             continue
         yield sse_event("info", f"🌼 Processing GC {idx+1}/{len(group_ids)} (thread: {thread_id[:10]}...)")
 
+        # Session validity check
+        cl = ensure_valid_session(cl, session_id)
+        if not cl:
+            yield sse_event("error", "❌ Session invalid and re-login failed. Stopping.")
+            return
+
         # Add each user
         for i, uid in enumerate(user_ids):
             username = usernames[i]
             yield sse_event("info", f"👤 Adding {username}...")
-            success = add_user_to_thread(cl, thread_id, uid)
+            success = add_user_to_thread(cl, thread_id, uid, session_id)
             if success:
                 yield sse_event("success", f"✅ Added {username}")
             else:
