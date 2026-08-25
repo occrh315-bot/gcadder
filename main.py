@@ -6,7 +6,7 @@ import urllib.parse
 import logging
 import gc
 import requests
-from flask import Flask, request, render_template, Response
+from flask import Flask, request, render_template, Response, jsonify
 
 try:
     from instagrapi import Client
@@ -20,7 +20,7 @@ SESSION_ID = os.environ.get("SESSION_ID", "")
 DEFAULT_DELAY = 20
 MIN_DELAY = 10
 API_TIMEOUT = 60
-THREAD_SCAN_LIMIT = 500   # pagination handle karega
+THREAD_SCAN_LIMIT = 500   # maximum groups to fetch
 
 # ─── LOGGING ─────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
@@ -66,11 +66,11 @@ def login_session(session_id):
         logger.error(f"Login failed: {e}")
         return None
 
-# ─── FETCH ALL GROUPS (PAGINATION) ──────────────────────
-def fetch_all_groups(cl, limit=THREAD_SCAN_LIMIT):
-    all_group_threads = []
+# ─── FETCH GROUPS (PRIMARY: private_request + pagination) ─
+def fetch_all_groups_private(cl, limit=THREAD_SCAN_LIMIT):
+    all_group_ids = []
     cursor = None
-    while len(all_group_threads) < limit:
+    while len(all_group_ids) < limit:
         try:
             data = {
                 "visual_message_return_type": "unseen",
@@ -87,7 +87,43 @@ def fetch_all_groups(cl, limit=THREAD_SCAN_LIMIT):
                 if t.get("is_group") or len(t.get("users", [])) > 1:
                     tid = str(t.get("thread_v2_id") or t.get("thread_id") or t.get("pk"))
                     if tid:
-                        all_group_threads.append(tid)
+                        all_group_ids.append(tid)
+            next_cursor = inbox.get("oldest_cursor") or inbox.get("next_cursor")
+            has_older = inbox.get("has_older", False)
+            if not has_older or not next_cursor:
+                break
+            cursor = next_cursor
+            time.sleep(1)   # respectful delay
+        except Exception as e:
+            logger.warning(f"private_request pagination failed: {e}")
+            break
+    return list(dict.fromkeys(all_group_ids))
+
+# ─── FETCH GROUPS (FALLBACK 1: direct_threads with high amount) ─
+def fetch_groups_direct(cl, limit=THREAD_SCAN_LIMIT):
+    try:
+        threads = cl.direct_threads(amount=limit)
+        return [str(t.id) for t in threads if t.is_group]
+    except Exception as e:
+        logger.warning(f"direct_threads fallback failed: {e}")
+        return []
+
+# ─── FETCH GROUPS (FALLBACK 2: direct_threads with manual pagination) ─
+def fetch_groups_direct_paginated(cl, limit=THREAD_SCAN_LIMIT):
+    all_ids = []
+    cursor = None
+    while len(all_ids) < limit:
+        try:
+            kwargs = {"amount": 20}
+            if cursor:
+                kwargs["cursor"] = cursor
+            threads = cl.direct_threads(**kwargs)
+            if not threads:
+                break
+            all_ids.extend([str(t.id) for t in threads if t.is_group])
+            # Try to get next cursor from last_response
+            raw = cl.last_response.json()
+            inbox = raw.get("inbox", {})
             next_cursor = inbox.get("oldest_cursor") or inbox.get("next_cursor")
             has_older = inbox.get("has_older", False)
             if not has_older or not next_cursor:
@@ -95,9 +131,28 @@ def fetch_all_groups(cl, limit=THREAD_SCAN_LIMIT):
             cursor = next_cursor
             time.sleep(1)
         except Exception as e:
-            logger.warning(f"Fetch threads failed: {e}")
+            logger.warning(f"direct_threads pagination failed: {e}")
             break
-    return list(dict.fromkeys(all_group_threads))
+    return list(dict.fromkeys(all_ids))
+
+# ─── MASTER FETCH (tries all methods) ─────────────────────
+def fetch_all_groups(cl, limit=THREAD_SCAN_LIMIT):
+    # 1st try: private_request pagination
+    ids = fetch_all_groups_private(cl, limit)
+    if ids:
+        return ids
+
+    # 2nd try: direct_threads high amount
+    ids = fetch_groups_direct(cl, limit)
+    if ids:
+        return ids
+
+    # 3rd try: direct_threads with manual pagination
+    ids = fetch_groups_direct_paginated(cl, limit)
+    if ids:
+        return ids
+
+    return []
 
 # ─── ADD USER WITH FALLBACK METHODS ──────────────────────
 def add_user_to_thread(cl, thread_id, user_id):
@@ -125,7 +180,7 @@ def add_user_to_thread(cl, thread_id, user_id):
     except Exception as e:
         logger.warning(f"⚠️ private_request add failed: {e}")
 
-    # Method 3: direct_messages.add_user
+    # Method 3: direct_messages.add_user (if available)
     try:
         if hasattr(cl, 'direct_messages') and hasattr(cl.direct_messages, 'add_user'):
             result = retry_api_call(cl.direct_messages.add_user, thread_id, user_id)
@@ -206,7 +261,11 @@ def fetch_groups_api():
         cl = login_session(session_id)
         if not cl:
             return jsonify({"success": False, "error": "Login failed"}), 400
+
         group_ids = fetch_all_groups(cl)
+        if not group_ids:
+            return jsonify({"success": False, "error": "No groups found"}), 400
+
         group_details = []
         for tid in group_ids:
             try:
@@ -215,8 +274,10 @@ def fetch_groups_api():
             except:
                 name = tid
             group_details.append({"id": tid, "name": name})
+
         return jsonify({"success": True, "groups": group_details})
     except Exception as e:
+        logger.error(f"Fetch groups error: {e}")
         return jsonify({"success": False, "error": str(e)}), 400
 
 @app.route("/api/start-add", methods=["POST"])
