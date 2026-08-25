@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GC Adder - Pro</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #08080e;
+            color: #e8edf5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f111a; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: #2a2d3f; border-radius: 10px; }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            background: rgba(18, 20, 30, 0.85);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 28px;
+            padding: 30px 35px;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+        }
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 15px;
+        }
+        .header h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 22px;
+            background: linear-gradient(135deg, #b0c7ff, #6b8cff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 1.5px;
+        }
+        .badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 14px;
+            border-radius: 40px;
+            background: rgba(107, 140, 255, 0.15);
+            border: 1px solid rgba(107, 140, 255, 0.2);
+            color: #8aa8ff;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1.8fr;
+            gap: 28px;
+        }
+        .form-card {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 18px;
+            padding: 22px;
+        }
+        .form-group { margin-bottom: 14px; }
+        .form-group label {
+            display: block;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #6a7a8e;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0c0e16;
+            border: 1px solid #1e212b;
+            border-radius: 12px;
+            color: #e8edf5;
+            font-size: 13px;
+            outline: none;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            border-color: #6b8cff;
+            box-shadow: 0 0 0 3px rgba(107, 140, 255, 0.15);
+        }
+        .row-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 13px 20px;
+            background: linear-gradient(135deg, #6b8cff, #8a6cff);
+            border: none;
+            border-radius: 40px;
+            font-weight: 700;
+            font-size: 15px;
+            color: #fff;
+            cursor: pointer;
+            margin-top: 6px;
+        }
+        .btn-secondary {
+            width: 100%;
+            padding: 10px 15px;
+            background: rgba(107, 140, 255, 0.1);
+            border: 1px solid rgba(107, 140, 255, 0.25);
+            border-radius: 40px;
+            font-weight: 600;
+            font-size: 13px;
+            color: #8aa8ff;
+            cursor: pointer;
+            margin-top: 6px;
+        }
+        .group-list {
+            max-height: 150px;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.05);
+            border-radius: 10px;
+            padding: 8px;
+            margin-top: 8px;
+            display: none;
+        }
+        .group-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .group-item input { width: auto; }
+        .logs-panel {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 18px;
+            padding: 18px 20px;
+            display: flex;
+            flex-direction: column;
+            min-height: 450px;
+        }
+        .logs-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .stats-bar {
+            display: flex;
+            gap: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 8px 12px;
+            border-radius: 40px;
+            margin-bottom: 12px;
+        }
+        .stat-item { font-size: 11px; color: #6a7a8e; }
+        .stat-item .num { font-weight: 700; font-size: 14px; color: #e8edf5; }
+        .progress-wrap {
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            margin-bottom: 12px;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #6b8cff, #8a6cff);
+            border-radius: 10px;
+            transition: width 0.4s ease;
+        }
+        .log-container {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.25);
+            border-radius: 12px;
+            padding: 8px 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            line-height: 1.8;
+        }
+        .log-line { padding: 2px 0; display: flex; gap: 8px; }
+        .log-time { color: #4a5a6a; font-size: 10px; min-width: 60px; }
+        .log-type-info { color: #67e8f9; }
+        .log-type-success { color: #4ade80; }
+        .log-type-error { color: #ff6b61; }
+        .log-type-warn { color: #fbbf24; }
+        .empty-logs { color: #2a3340; text-align: center; padding: 40px 0; }
+        @media (max-width: 820px) {
+            .grid-2 { grid-template-columns: 1fr; }
+            .row-2 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>⚡ GC ADDER</h1>
+        <span class="badge">v1 · SSE</span>
+    </div>
+    <div class="grid-2">
+        <div class="form-card">
+            <div class="form-group">
+                <label>Session ID</label>
+                <input type="text" id="session_id" placeholder="Instagram sessionid" />
+            </div>
+            <div class="row-2">
+                <div class="form-group">
+                    <label>Delay (seconds)</label>
+                    <input type="number" id="delay" value="20" min="10" />
+                </div>
+                <div class="form-group">
+                    <label>Batch Size (0 = off)</label>
+                    <input type="number" id="batch_size" value="0" min="0" />
+                </div>
+            </div>
+            <div class="row-2">
+                <div class="form-group">
+                    <label>Batch Cooldown (seconds)</label>
+                    <input type="number" id="batch_cooldown" value="0" min="0" />
+                </div>
+                <div class="form-group">
+                    <label>Usernames (comma separated)</label>
+                    <input type="text" id="usernames" placeholder="user1, user2" />
+                </div>
+            </div>
+            <button class="btn-secondary" onclick="fetchGroups()">⚡ Fetch Groups</button>
+            <div id="fetch-status" style="margin-top:8px; font-size:12px;"></div>
+            <div class="group-list" id="group-list"></div>
+            <button class="btn-primary" id="startBtn" onclick="startAdding()">🚀 Start Adding</button>
+        </div>
+        <div class="logs-panel">
+            <div class="logs-header">
+                <span>📡 Live Console</span>
+                <button onclick="clearLogs()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.06);color:#6a7a8e;padding:4px 12px;border-radius:40px;font-size:10px;cursor:pointer;">🗑 Clear</button>
+            </div>
+            <div class="stats-bar">
+                <div class="stat-item">🎯 Total: <span class="num" id="statTotal">0</span></div>
+                <div class="stat-item">✅ Success: <span class="num" id="statSuccess" style="color:#4ade80;">0</span></div>
+                <div class="stat-item">❌ Failed: <span class="num" id="statFailed" style="color:#ff6b61;">0</span></div>
+                <div class="stat-item">⏳ Progress: <span class="num" id="statProgress" style="color:#67e8f9;">0%</span></div>
+            </div>
+            <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+            <div class="log-container" id="logContainer"><div class="empty-logs">⏳ Waiting for action...</div></div>
+        </div>
+    </div>
+</div>
+
+<script>
+let groups = [];
+let selectedGroups = new Set();
+let totalGCs = 0, successCount = 0, failCount = 0;
+
+function appendLog(type, msg, time) {
+    const container = document.getElementById('logContainer');
+    const placeholder = container.querySelector('.empty-logs');
+    if (placeholder) placeholder.remove();
+    const line = document.createElement('div');
+    line.className = `log-line log-type-${type}`;
+    line.innerHTML = `<span class="log-time">${time || new Date().toLocaleTimeString()}</span><span>${msg}</span>`;
+    container.appendChild(line);
+    container.scrollTop = container.scrollHeight;
+}
+
+function clearLogs() {
+    document.getElementById('logContainer').innerHTML = '<div class="empty-logs">⏳ Waiting for action...</div>';
+    totalGCs = 0; successCount = 0; failCount = 0;
+    updateStats();
+    document.getElementById('progressBar').style.width = '0%';
+}
+
+function updateStats() {
+    document.getElementById('statTotal').textContent = totalGCs;
+    document.getElementById('statSuccess').textContent = successCount;
+    document.getElementById('statFailed').textContent = failCount;
+    const pct = totalGCs > 0 ? Math.round(((successCount + failCount) / totalGCs) * 100) : 0;
+    document.getElementById('statProgress').textContent = pct + '%';
+    document.getElementById('progressBar').style.width = pct + '%';
+}
+
+function fetchGroups() {
+    const sid = document.getElementById('session_id').value.trim();
+    if (!sid) { alert('Enter Session ID first'); return; }
+    document.getElementById('fetch-status').textContent = 'Fetching...';
+    fetch('/api/fetch-groups', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({session_id: sid})
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            groups = data.groups;
+            selectedGroups = new Set(groups.map(g => g.id));
+            renderGroups();
+            document.getElementById('fetch-status').textContent = `✅ ${groups.length} groups found`;
+            document.getElementById('fetch-status').style.color = '#4ade80';
+        } else {
+            document.getElementById('fetch-status').textContent = '❌ ' + (data.error || 'Failed');
+            document.getElementById('fetch-status').style.color = '#ff6b61';
+        }
+    })
+    .catch(e => {
+        document.getElementById('fetch-status').textContent = 'Error: ' + e.message;
+        document.getElementById('fetch-status').style.color = '#ff6b61';
+    });
+}
+
+function renderGroups() {
+    const list = document.getElementById('group-list');
+    list.style.display = 'block';
+    list.innerHTML = '';
+    groups.forEach(g => {
+        const div = document.createElement('div');
+        div.className = 'group-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = selectedGroups.has(g.id);
+        cb.addEventListener('change', () => {
+            if (cb.checked) selectedGroups.add(g.id);
+            else selectedGroups.delete(g.id);
+        });
+        const span = document.createElement('span');
+        span.textContent = `${g.name} (${g.id})`;
+        div.appendChild(cb);
+        div.appendChild(span);
+        list.appendChild(div);
+    });
+}
+
+function startAdding() {
+    const sid = document.getElementById('session_id').value.trim();
+    const usernames = document.getElementById('usernames').value.trim();
+    const delay = document.getElementById('delay').value;
+    const batchSize = document.getElementById('batch_size').value;
+    const batchCooldown = document.getElementById('batch_cooldown').value;
+    if (!sid || !usernames || selectedGroups.size === 0) {
+        alert('Fill all fields and select at least one group');
+        return;
+    }
+    clearLogs();
+    totalGCs = selectedGroups.size;
+    updateStats();
+
+    const formData = new FormData();
+    formData.append('session_id', sid);
+    formData.append('group_ids', Array.from(selectedGroups).join(','));
+    formData.append('usernames', usernames);
+    formData.append('delay', delay);
+    formData.append('batch_size', batchSize);
+    formData.append('batch_cooldown', batchCooldown);
+
+    fetch('/api/start-add', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        function read() {
+            reader.read().then(({done, value}) => {
+                if (done) return;
+                buffer += decoder.decode(value, {stream: true});
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop();
+                parts.forEach(part => {
+                    if (part.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(part.substring(6));
+                            appendLog(data.type, data.msg, data.time);
+                            if (data.type === 'success' && data.msg.includes('Added')) successCount++;
+                            if (data.type === 'error') failCount++;
+                            updateStats();
+                        } catch(e) {}
+                    }
+                });
+                read();
+            });
+        }
+        read();
+    });
+}
+</script>
+</body>
+</html>
